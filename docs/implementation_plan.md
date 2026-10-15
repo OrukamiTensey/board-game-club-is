@@ -44,60 +44,63 @@ $$\text{TICK-001} \to \text{TICK-002 (PLAN-GATE)} \to \text{TICK-005} \to \text{
 ## 4. Календарний графік у форматі PlantUML Gantt
 
 ```plantuml
-@startuml
+@startgantt
 title Календарний графік реалізації BoardClub IS (SDD-цикл)
+projectscale daily zoom 1.6
+
+saturday are closed
+sunday are closed
+
+Project starts 2026-10-12
+
 <style>
 ganttDiagram {
   task {
-    FontName Segoe UI
-    FontSize 11
+    FontSize 12
+    RoundCorner 8
   }
   milestone {
-    FontColor Red
     FontSize 12
   }
 }
 </style>
 
-Project starts 2026-10-01
-
--- Фаза 0: Специфікація та Планування --
-[TICK-001: SRS v1.0 та BDD (Human)] as [T1] lasts 2 days
-[TICK-002: PLAN-GATE (Human)] as [T2] lasts 1 day
+[TICK-001: SRS v1.0 та BDD (Human)] as [T1] lasts 2 days and is colored in #FFE0B2
+[TICK-002: PLAN-GATE (Human)] as [T2] lasts 2 days and is colored in #FFCC80
 [T1] -> [T2]
-[PLAN-GATE APPROVED] happens at [T2]'s end
 
--- Фаза 1: Паралельна розробка TDD --
-[TICK-003: Тести ігор і фондів (Agent)] as [T3] lasts 1 day
-[TICK-004: Моделі BoardGame (Agent)] as [T4] lasts 1 day
+[PLAN-GATE APPROVED (15.10.2026)] as [M1] happens at [T2]'s end
+
+[TICK-003: Тести ігор і фондів (Agent)] as [T3] lasts 1 day and is colored in #BBDEFB
+[TICK-004: Моделі BoardGame (Agent)] as [T4] lasts 1 day and is colored in #90CAF9
 [T2] -> [T3]
 [T3] -> [T4]
 
-[TICK-005: Тести застави і пені (Agent)] as [T5] lasts 1 day
-[TICK-006: Калькулятор прокату (Agent)] as [T6] lasts 2 days
+[TICK-005: Тести застави і пені (Agent)] as [T5] lasts 1 day and is colored in #BBDEFB
+[TICK-006: Калькулятор прокату (Agent)] as [T6] lasts 2 days and is colored in #90CAF9
 [T2] -> [T5]
 [T5] -> [T6]
 
-[TICK-007: Тести столів і No-Show (Agent)] as [T7] lasts 1 day
-[TICK-008: Сервіс бронювання (Agent)] as [T8] lasts 1 day
+[TICK-007: Тести столів і No-Show (Agent)] as [T7] lasts 1 day and is colored in #BBDEFB
+[TICK-008: Сервіс бронювання (Agent)] as [T8] lasts 1 day and is colored in #90CAF9
 [T2] -> [T7]
 [T7] -> [T8]
 
--- Фаза 2: Верифікація, Документація та Реліз --
-[TICK-009: Стрес-тест <=100мс (Agent)] as [T9] lasts 1 day
-[TICK-010: Наскрізний UAT (Human)] as [T10] lasts 1 day
+[TICK-009: Стрес-тест <=100мс (Agent)] as [T9] lasts 1 day and is colored in #C8E6C9
+[TICK-010: Наскрізний UAT (Human)] as [T10] lasts 1 day and is colored in #FFE0B2
 [T6] -> [T9]
 [T4] -> [T10]
 [T6] -> [T10]
 [T8] -> [T10]
 
-[TICK-011: Документація API (Agent)] as [T11] lasts 1 day
+[TICK-011: Документація API (Agent)] as [T11] lasts 1 day and is colored in #E1BEE7
 [T10] -> [T11]
 
-[TICK-012: CODE-GATE (Human)] as [T12] lasts 1 day
+[TICK-012: CODE-GATE (Human)] as [T12] lasts 1 day and is colored in #FFAB91
 [T9] -> [T12]
 [T10] -> [T12]
 [T11] -> [T12]
-[SYSTEM RELEASE READY] happens at [T12]'s end
 
-@enduml
+[SYSTEM RELEASE READY] as [M2] happens at [T12]'s end
+@endgantt
+```
