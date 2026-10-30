@@ -1,0 +1,1221 @@
+openapi: 3.0.3
+
+# ============================================================================
+# BoardClub IS — API-контракт (Лабораторна робота №4, SDD / API-First)
+# Створено на основі SRS v1.0 (spec/src.md) та глосарію Ubiquitous Language.
+# ============================================================================
+
+info:
+  title: BoardClub IS API
+  version: 1.0.0
+  description: |
+    API інформаційної системи клубу настільних ігор **BoardClub IS**.
+
+    Контракт побудовано за підходом **API-First** у методології Spec-Driven Development (SDD).
+    Кожен ендпоінт має явну прив'язку до вимог SRS v1.0 через ідентифікатори REQ-ID.
+
+    ### Основні доменні сутності (Ubiquitous Language)
+    | Термін | Опис |
+    |--------|------|
+    | `BoardGame` | Абстрактна сутність гри в каталозі (назва, жанр, видавець, категорія ризику) |
+    | `GameCopy` | Фізичний екземпляр гри з унікальним інвентарним номером |
+    | `RentalFund` | Екземпляри, доступні для оренди додому |
+    | `ClubFund` | Екземпляри для використання виключно в клубі |
+    | `ClubMember` | Верифікований статус гостя з правом на знижену заставу |
+    | `GamingTable` | Фізичне місце в клубі з погодинним слотом зайнятості |
+    | `No-Show` | Автоскасування бронювання столу при неявці >20 хв |
+  contact:
+    name: BoardClub IS Team
+    email: support@boardclub.example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Локальний сервер розробки (Mock API)
+  - url: https://api.boardclub.example.com
+    description: Продакшн-сервер
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Games
+    description: Каталог ігор та управління фондом (REQ-F-001, REQ-F-002, REQ-F-003)
+  - name: Rentals
+    description: Операції прокату — розрахунок застави, повернення, штрафи (REQ-F-004 — REQ-F-007)
+  - name: Tables
+    description: Бронювання ігрових столів та обробка No-Show (REQ-F-008, REQ-F-009)
+
+# ============================================================================
+# PATHS
+# ============================================================================
+paths:
+  # --------------------------------------------------------------------------
+  # GAMES
+  # --------------------------------------------------------------------------
+  /api/v1/games:
+    get:
+      operationId: listGames
+      tags: [Games]
+      summary: Отримати каталог ігор
+      description: |
+        Повертає список настільних ігор із каталогу з можливістю фільтрації
+        за категорією ризику (A / B / C).
+
+        **Прив'язка до вимог:**
+        - **REQ-F-001** — Класифікація ігор за ринковою вартістю:
+          - Категорія A: ≤ 1000 грн
+          - Категорія B: 1001–2500 грн
+          - Категорія C: > 2500 грн
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: |
+            Фільтр за категорією ризику гри (REQ-F-001).
+            - `A` — до 1000 грн включно
+            - `B` — від 1001 до 2500 грн включно
+            - `C` — понад 2500 грн
+          schema:
+            type: string
+            enum: [A, B, C]
+          example: B
+        - name: page
+          in: query
+          required: false
+          description: Номер сторінки пагінації (починаючи з 1).
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        - name: page_size
+          in: query
+          required: false
+          description: Кількість записів на сторінці.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+      responses:
+        "200":
+          description: Успішне отримання списку ігор.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameListResponse"
+              example:
+                items:
+                  - id: "bg-001"
+                    title: "Dune: Imperium"
+                    genre: "Стратегія"
+                    publisher: "Dire Wolf Digital"
+                    market_price: 2200.00
+                    category: "B"
+                    daily_rental_rate: 150.00
+                  - id: "bg-002"
+                    title: "Каркасон"
+                    genre: "Сімейна"
+                    publisher: "Hans im Glück"
+                    market_price: 800.00
+                    category: "A"
+                    daily_rental_rate: 80.00
+                  - id: "bg-003"
+                    title: "Gloomhaven"
+                    genre: "Кооперативна RPG"
+                    publisher: "Cephalofair Games"
+                    market_price: 4500.00
+                    category: "C"
+                    daily_rental_rate: 300.00
+                total: 3
+                page: 1
+                page_size: 20
+        "400":
+          description: Невалідний параметр запиту.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "VALIDATION_ERROR"
+                message: "Невалідне значення параметра 'category'. Допустимі значення: A, B, C."
+                details:
+                  field: "category"
+                  rejected_value: "X"
+                timestamp: "2026-10-30T09:00:00Z"
+
+  /api/v1/games/{id}/copies:
+    get:
+      operationId: listGameCopies
+      tags: [Games]
+      summary: Список фізичних примірників гри
+      description: |
+        Повертає список фізичних екземплярів (`GameCopy`) конкретної гри,
+        включаючи їх поточний стан та приналежність до фонду.
+
+        **Прив'язка до вимог:**
+        - **REQ-F-002** — Розподіл фондів: `ClubFund` (тільки в залі) / `RentalFund` (оренда додому).
+        - **REQ-F-003** — Життєвий цикл копії: 4 стани — `AVAILABLE`, `RENTED`, `NEEDS_REPAIR`, `DECOMMISSIONED`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Унікальний ідентифікатор настільної гри.
+          schema:
+            type: string
+          example: "bg-001"
+      responses:
+        "200":
+          description: Успішне отримання списку примірників.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameCopyListResponse"
+              example:
+                items:
+                  - copy_id: "BG-001-R1"
+                    inventory_number: "INV-2024-0042"
+                    game_id: "bg-001"
+                    fund: "RentalFund"
+                    status: "AVAILABLE"
+                  - copy_id: "BG-001-R2"
+                    inventory_number: "INV-2024-0043"
+                    game_id: "bg-001"
+                    fund: "RentalFund"
+                    status: "RENTED"
+                  - copy_id: "BG-001-C1"
+                    inventory_number: "INV-2024-0044"
+                    game_id: "bg-001"
+                    fund: "ClubFund"
+                    status: "AVAILABLE"
+                  - copy_id: "BG-001-R3"
+                    inventory_number: "INV-2024-0045"
+                    game_id: "bg-001"
+                    fund: "RentalFund"
+                    status: "NEEDS_REPAIR"
+                total: 4
+        "404":
+          description: Гру з вказаним ID не знайдено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "GAME_NOT_FOUND"
+                message: "Гру з ідентифікатором 'bg-999' не знайдено в каталозі."
+                details: null
+                timestamp: "2026-10-30T09:05:00Z"
+
+  # --------------------------------------------------------------------------
+  # RENTALS
+  # --------------------------------------------------------------------------
+  /api/v1/rentals/calculate:
+    post:
+      operationId: calculateRental
+      tags: [Rentals]
+      summary: Розрахунок застави та вартості прокату
+      description: |
+        Виконує калькуляцію повної вартості оренди, відсотка та суми застави
+        на основі категорії гри, статусу клієнта та кількості днів.
+
+        Час відповіді ≤ 100 мс (REQ-NF-001).
+
+        **Прив'язка до вимог:**
+        - **REQ-F-004** — Розрахунок застави:
+          - Звичайний клієнт: 100% ринкової вартості.
+          - ClubMember + Категорія A: 0% (0 грн).
+          - ClubMember + Категорія B або C: 30% від ринкової вартості.
+        - **REQ-F-005** — Автоматизація статусу ClubMember:
+          клієнт отримує статус після 5 успішних оренд без прострочення та штрафів.
+        - **REQ-NF-001** — Калькуляція чека ≤ 100 мс.
+
+        **Обмеження:**
+        - Якщо обрана копія належить до `ClubFund`, запит відхиляється з помилкою
+          `GAME_FUND_RESTRICTION` (REQ-F-002).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RentalCalculateRequest"
+            example:
+              game_id: "bg-001"
+              client_id: "client-007"
+              rental_days: 3
+      responses:
+        "200":
+          description: Успішний розрахунок оренди та застави.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RentalCalculateResponse"
+              examples:
+                clubMemberCategoryB:
+                  summary: ClubMember, категорія B — застава 30%
+                  value:
+                    game_id: "bg-001"
+                    client_id: "client-007"
+                    game_title: "Dune: Imperium"
+                    category: "B"
+                    market_price: 2200.00
+                    daily_rental_rate: 150.00
+                    rental_days: 3
+                    rental_total: 450.00
+                    is_club_member: true
+                    deposit_percent: 30
+                    deposit_amount: 660.00
+                regularClientCategoryB:
+                  summary: Звичайний клієнт, категорія B — застава 100%
+                  value:
+                    game_id: "bg-001"
+                    client_id: "client-012"
+                    game_title: "Dune: Imperium"
+                    category: "B"
+                    market_price: 2200.00
+                    daily_rental_rate: 150.00
+                    rental_days: 3
+                    rental_total: 450.00
+                    is_club_member: false
+                    deposit_percent: 100
+                    deposit_amount: 2200.00
+                clubMemberCategoryA:
+                  summary: ClubMember, категорія A — застава 0%
+                  value:
+                    game_id: "bg-002"
+                    client_id: "client-007"
+                    game_title: "Каркасон"
+                    category: "A"
+                    market_price: 800.00
+                    daily_rental_rate: 80.00
+                    rental_days: 5
+                    rental_total: 400.00
+                    is_club_member: true
+                    deposit_percent: 0
+                    deposit_amount: 0.00
+        "400":
+          description: |
+            Помилка валідації вхідних даних.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "VALIDATION_ERROR"
+                message: "Поле 'rental_days' є обов'язковим і має бути цілим числом ≥ 1."
+                details:
+                  field: "rental_days"
+                  constraint: "minimum: 1"
+                timestamp: "2026-10-30T09:10:00Z"
+        "422":
+          description: |
+            Бізнес-правило порушено — спроба орендувати примірник з ClubFund (REQ-F-002).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "GAME_FUND_RESTRICTION"
+                message: "Екземпляр призначений виключно для гри в залі. Оренда додому копій з ClubFund заборонена."
+                details:
+                  game_id: "bg-001"
+                  copy_id: "BG-001-C1"
+                  fund: "ClubFund"
+                timestamp: "2026-10-30T09:11:00Z"
+
+  /api/v1/rentals/{id}/return:
+    post:
+      operationId: processRentalReturn
+      tags: [Rentals]
+      summary: Розрахунок повернення гри
+      description: |
+        Обробляє повернення орендованої гри: розраховує пеню за прострочення,
+        штраф за пошкодження та фінальну суму до повернення або доплати.
+
+        **Прив'язка до вимог:**
+        - **REQ-F-006** — Штраф за прострочення: 2× добовий тариф за кожну повну
+          або неповну добу прострочення.
+        - **REQ-F-007** — Штраф за дефект: адміністратор фіксує ставку утримання
+          (10%, 20%, 30%, 50% або 100% від вартості), стан копії → `NEEDS_REPAIR`,
+          лічильник чистих оренд клієнта → 0, статус ClubMember скасовується.
+        - **REQ-NF-003** — Аудитованість: будь-яка зміна фінансових утримань логується
+          з ID адміністратора та часовою міткою.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Унікальний ідентифікатор активного договору оренди.
+          schema:
+            type: string
+          example: "rental-2024-0158"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RentalReturnRequest"
+            example:
+              actual_return_date: "2026-10-31T12:00:00Z"
+              defect_detected: true
+              defect_fee_percent: 20.0
+      responses:
+        "200":
+          description: Успішний розрахунок повернення.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RentalReturnResponse"
+              examples:
+                lateReturnWithDefect:
+                  summary: Прострочення на 1 добу + дефект 20% (BDD-сценарій)
+                  value:
+                    rental_id: "rental-2024-0158"
+                    client_id: "client-007"
+                    game_title: "Dune: Imperium"
+                    scheduled_return_date: "2026-10-30T12:00:00Z"
+                    actual_return_date: "2026-10-31T12:00:00Z"
+                    overdue_days: 1
+                    daily_rental_rate: 100.00
+                    overdue_penalty: 200.00
+                    defect_detected: true
+                    defect_fee_percent: 20.0
+                    defect_fee_amount: 200.00
+                    deposit_held: 1000.00
+                    total_deductions: 400.00
+                    refund_amount: 600.00
+                    copy_status: "NEEDS_REPAIR"
+                    client_clean_rentals_reset: true
+                    client_club_member_revoked: true
+                onTimeNoDamage:
+                  summary: Повернення вчасно без пошкоджень
+                  value:
+                    rental_id: "rental-2024-0159"
+                    client_id: "client-012"
+                    game_title: "Каркасон"
+                    scheduled_return_date: "2026-10-30T12:00:00Z"
+                    actual_return_date: "2026-10-30T10:00:00Z"
+                    overdue_days: 0
+                    daily_rental_rate: 80.00
+                    overdue_penalty: 0.00
+                    defect_detected: false
+                    defect_fee_percent: 0.0
+                    defect_fee_amount: 0.00
+                    deposit_held: 800.00
+                    total_deductions: 0.00
+                    refund_amount: 800.00
+                    copy_status: "AVAILABLE"
+                    client_clean_rentals_reset: false
+                    client_club_member_revoked: false
+        "404":
+          description: Договір оренди не знайдено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "RENTAL_NOT_FOUND"
+                message: "Договір оренди з ідентифікатором 'rental-xxx' не знайдено."
+                details: null
+                timestamp: "2026-10-30T09:15:00Z"
+        "422":
+          description: Порушення бізнес-логіки (наприклад, оренда вже закрита).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "RENTAL_ALREADY_CLOSED"
+                message: "Оренда вже повернена та закрита. Повторна обробка неможлива."
+                details:
+                  rental_id: "rental-2024-0158"
+                  closed_at: "2026-10-31T12:05:00Z"
+                timestamp: "2026-10-30T09:16:00Z"
+
+  # --------------------------------------------------------------------------
+  # TABLES / BOOKINGS
+  # --------------------------------------------------------------------------
+  /api/v1/tables/bookings:
+    post:
+      operationId: createTableBooking
+      tags: [Tables]
+      summary: Бронювання ігрового столу
+      description: |
+        Створює бронювання ігрового столу на вказаний час із дискретністю 1 година.
+
+        **Прив'язка до вимог:**
+        - **REQ-F-008** — Дискретність бронювання: слоти кратні 1 годині,
+          `start_time` повинен мати хвилини = 00, секунди = 00.
+        - **REQ-NF-002** — Захист від стану гонки (race condition) та овербукінгу:
+          транзакційна атомарність при створенні бронювання.
+
+        **Валідація:**
+        - `duration_hours` — ціле число ≥ 1.
+        - `start_time` — повна година (хвилини та секунди = 00).
+        - Конфлікт слотів повертає `409 Conflict` з кодом `TABLE_OVERBOOKING`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TableBookingRequest"
+            example:
+              table_id: "table-03"
+              client_id: "client-015"
+              start_time: "2026-10-30T14:00:00Z"
+              duration_hours: 2
+      responses:
+        "201":
+          description: Бронювання успішно створено зі статусом `CONFIRMED`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TableBookingResponse"
+              example:
+                booking_id: "booking-2024-0312"
+                table_id: "table-03"
+                client_id: "client-015"
+                start_time: "2026-10-30T14:00:00Z"
+                end_time: "2026-10-30T16:00:00Z"
+                duration_hours: 2
+                status: "CONFIRMED"
+                created_at: "2026-10-30T09:20:00Z"
+        "400":
+          description: Помилка валідації (наприклад, некратний час або невалідна тривалість).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidStartTime:
+                  summary: Час початку не кратний 1 годині (REQ-F-008)
+                  value:
+                    code: "VALIDATION_ERROR"
+                    message: "Час початку бронювання повинен бути кратним 1 годині (хвилини = 00). Отримано: 15:30."
+                    details:
+                      field: "start_time"
+                      rejected_value: "2026-10-30T15:30:00Z"
+                      constraint: "Хвилини та секунди повинні дорівнювати 00"
+                    timestamp: "2026-10-30T09:21:00Z"
+                invalidDuration:
+                  summary: Невалідна тривалість бронювання
+                  value:
+                    code: "VALIDATION_ERROR"
+                    message: "Тривалість бронювання має бути цілим числом ≥ 1 годину."
+                    details:
+                      field: "duration_hours"
+                      rejected_value: 0
+                      constraint: "minimum: 1, type: integer"
+                    timestamp: "2026-10-30T09:22:00Z"
+        "409":
+          description: |
+            Конфлікт слотів — стіл вже заброньовано на вказаний час (REQ-NF-002).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "TABLE_OVERBOOKING"
+                message: "Стіл 'table-03' вже заброньовано на вказаний часовий слот. Оберіть інший час або стіл."
+                details:
+                  table_id: "table-03"
+                  conflicting_slot:
+                    start_time: "2026-10-30T13:00:00Z"
+                    end_time: "2026-10-30T15:00:00Z"
+                    booking_id: "booking-2024-0300"
+                timestamp: "2026-10-30T09:23:00Z"
+
+  /api/v1/tables/bookings/{id}/no-show:
+    post:
+      operationId: triggerNoShowCheck
+      tags: [Tables]
+      summary: Тригер перевірки неявки гостя (No-Show)
+      description: |
+        Ініціює перевірку неявки клієнта на заброньований стіл.
+        Якщо від початку слота пройшло понад 20 хвилин і явка не підтверджена,
+        бронь автоматично переводиться в статус `CANCELLED_NO_SHOW`,
+        а стіл стає доступним для інших гостей.
+
+        **Прив'язка до вимог:**
+        - **REQ-F-009** — Автоскасування No-Show: якщо бронь не активована
+          протягом 20 хвилин від початку слота, система переводить бронь
+          у статус «Скасовано (No-Show)» та сповіщає оператора.
+
+        **Приклад:** Бронь на 14:00 без підтвердження о 14:21 → `CANCELLED_NO_SHOW`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Унікальний ідентифікатор бронювання столу.
+          schema:
+            type: string
+          example: "booking-2024-0312"
+      responses:
+        "200":
+          description: |
+            Перевірку виконано. Якщо пройшло >20 хвилин — бронь скасована,
+            стіл вивільнено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoShowResponse"
+              examples:
+                noShowConfirmed:
+                  summary: Неявка підтверджена (>20 хв), бронь скасована
+                  value:
+                    booking_id: "booking-2024-0312"
+                    table_id: "table-03"
+                    client_id: "client-015"
+                    slot_start_time: "2026-10-30T14:00:00Z"
+                    checked_at: "2026-10-30T14:21:00Z"
+                    elapsed_minutes: 21
+                    no_show_triggered: true
+                    status: "CANCELLED_NO_SHOW"
+                    table_status: "AVAILABLE"
+                    message: "Бронювання скасовано через неявку клієнта (No-Show). Стіл вивільнено."
+                noShowNotYet:
+                  summary: Ще не пройшло 20 хвилин — бронь активна
+                  value:
+                    booking_id: "booking-2024-0312"
+                    table_id: "table-03"
+                    client_id: "client-015"
+                    slot_start_time: "2026-10-30T14:00:00Z"
+                    checked_at: "2026-10-30T14:15:00Z"
+                    elapsed_minutes: 15
+                    no_show_triggered: false
+                    status: "CONFIRMED"
+                    table_status: "RESERVED"
+                    message: "Час очікування ще не минув. До автоскасування залишилось 5 хвилин."
+        "404":
+          description: Бронювання не знайдено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                code: "BOOKING_NOT_FOUND"
+                message: "Бронювання з ідентифікатором 'booking-xxx' не знайдено."
+                details: null
+                timestamp: "2026-10-30T09:25:00Z"
+
+# ============================================================================
+# COMPONENTS — SCHEMAS
+# ============================================================================
+components:
+  schemas:
+    # ------------------------------------------------------------------------
+    # UNIFIED ERROR MODEL
+    # ------------------------------------------------------------------------
+    ErrorResponse:
+      type: object
+      description: |
+        Уніфікована модель помилки для всіх ендпоінтів API.
+        Використовується для валідаційних, бізнес-логічних та системних помилок.
+      required:
+        - code
+        - message
+        - timestamp
+      properties:
+        code:
+          type: string
+          description: |
+            Машиночитний ідентифікатор помилки. Приклади:
+            `VALIDATION_ERROR`, `GAME_FUND_RESTRICTION`, `TABLE_OVERBOOKING`,
+            `GAME_NOT_FOUND`, `RENTAL_NOT_FOUND`, `BOOKING_NOT_FOUND`,
+            `RENTAL_ALREADY_CLOSED`.
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          description: Людиночитний опис помилки українською мовою.
+          example: "Невалідне значення параметра запиту."
+        details:
+          type: object
+          nullable: true
+          description: |
+            Додаткові деталі помилки (необов'язкові).
+            Може бути об'єктом із зазначенням конкретного поля
+            або масивом множинних помилок валідації.
+            Значення `null`, якщо деталі відсутні.
+          additionalProperties: true
+          example:
+            field: "rental_days"
+            constraint: "minimum: 1"
+        timestamp:
+          type: string
+          format: date-time
+          description: Час виникнення помилки у форматі ISO 8601.
+          example: "2026-10-30T09:00:00Z"
+
+    # ------------------------------------------------------------------------
+    # GAMES
+    # ------------------------------------------------------------------------
+    BoardGame:
+      type: object
+      description: |
+        Настільна гра в каталозі (REQ-F-001).
+        Категорія ризику визначається автоматично за ринковою вартістю.
+      required:
+        - id
+        - title
+        - genre
+        - publisher
+        - market_price
+        - category
+        - daily_rental_rate
+      properties:
+        id:
+          type: string
+          description: Унікальний ідентифікатор гри.
+          example: "bg-001"
+        title:
+          type: string
+          description: Назва настільної гри.
+          example: "Dune: Imperium"
+        genre:
+          type: string
+          description: Жанр гри.
+          example: "Стратегія"
+        publisher:
+          type: string
+          description: Видавець гри.
+          example: "Dire Wolf Digital"
+        market_price:
+          type: number
+          format: double
+          description: |
+            Ринкова вартість гри (грн). Визначає категорію ризику (REQ-F-001):
+            - A: ≤ 1000
+            - B: 1001–2500
+            - C: > 2500
+          minimum: 0
+          example: 2200.00
+        category:
+          type: string
+          description: |
+            Категорія ризику гри (REQ-F-001), визначена за ринковою вартістю.
+          enum: [A, B, C]
+          example: "B"
+        daily_rental_rate:
+          type: number
+          format: double
+          description: Тариф оренди за добу (грн).
+          minimum: 0
+          example: 150.00
+
+    GameListResponse:
+      type: object
+      description: Пагінований список ігор із каталогу.
+      required:
+        - items
+        - total
+        - page
+        - page_size
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BoardGame"
+        total:
+          type: integer
+          description: Загальна кількість ігор, що відповідають фільтру.
+          minimum: 0
+          example: 42
+        page:
+          type: integer
+          description: Поточна сторінка.
+          minimum: 1
+          example: 1
+        page_size:
+          type: integer
+          description: Кількість записів на сторінці.
+          minimum: 1
+          example: 20
+
+    GameCopy:
+      type: object
+      description: |
+        Фізичний екземпляр настільної гри з інвентарним номером (REQ-F-002, REQ-F-003).
+        Належить до одного з фондів: `ClubFund` або `RentalFund`.
+        Має один із 4 дискретних станів.
+      required:
+        - copy_id
+        - inventory_number
+        - game_id
+        - fund
+        - status
+      properties:
+        copy_id:
+          type: string
+          description: Унікальний ідентифікатор примірника.
+          example: "BG-001-R1"
+        inventory_number:
+          type: string
+          description: Унікальний інвентарний номер фізичної коробки.
+          example: "INV-2024-0042"
+        game_id:
+          type: string
+          description: Ідентифікатор батьківської гри.
+          example: "bg-001"
+        fund:
+          type: string
+          description: |
+            Фонд, до якого належить примірник (REQ-F-002):
+            - `ClubFund` — виключно для використання в залі клубу.
+            - `RentalFund` — доступний для оренди додому.
+          enum: [ClubFund, RentalFund]
+          example: "RentalFund"
+        status:
+          type: string
+          description: |
+            Поточний стан примірника (REQ-F-003). 4 дискретні стани:
+            - `AVAILABLE` — доступний для видачі.
+            - `RENTED` — орендований клієнтом.
+            - `NEEDS_REPAIR` — потребує ремонту (встановлюється при фіксації дефекту, REQ-F-007).
+            - `DECOMMISSIONED` — списаний.
+          enum: [AVAILABLE, RENTED, NEEDS_REPAIR, DECOMMISSIONED]
+          example: "AVAILABLE"
+
+    GameCopyListResponse:
+      type: object
+      description: Список фізичних примірників конкретної гри.
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/GameCopy"
+        total:
+          type: integer
+          description: Загальна кількість примірників гри.
+          minimum: 0
+          example: 4
+
+    # ------------------------------------------------------------------------
+    # RENTALS
+    # ------------------------------------------------------------------------
+    RentalCalculateRequest:
+      type: object
+      description: Запит на розрахунок вартості оренди та застави (REQ-F-004, REQ-F-005).
+      required:
+        - game_id
+        - client_id
+        - rental_days
+      properties:
+        game_id:
+          type: string
+          description: Ідентифікатор гри для оренди.
+          example: "bg-001"
+        client_id:
+          type: string
+          description: Ідентифікатор клієнта.
+          example: "client-007"
+        rental_days:
+          type: integer
+          description: Кількість днів оренди.
+          minimum: 1
+          example: 3
+
+    RentalCalculateResponse:
+      type: object
+      description: |
+        Результат розрахунку оренди та застави (REQ-F-004, REQ-F-005, REQ-NF-001).
+        Включає прапорець `is_club_member` для індикації пільгової застави.
+      required:
+        - game_id
+        - client_id
+        - game_title
+        - category
+        - market_price
+        - daily_rental_rate
+        - rental_days
+        - rental_total
+        - is_club_member
+        - deposit_percent
+        - deposit_amount
+      properties:
+        game_id:
+          type: string
+          description: Ідентифікатор гри.
+          example: "bg-001"
+        client_id:
+          type: string
+          description: Ідентифікатор клієнта.
+          example: "client-007"
+        game_title:
+          type: string
+          description: Назва гри.
+          example: "Dune: Imperium"
+        category:
+          type: string
+          description: Категорія ризику гри (A / B / C).
+          enum: [A, B, C]
+          example: "B"
+        market_price:
+          type: number
+          format: double
+          description: Ринкова вартість гри (грн).
+          example: 2200.00
+        daily_rental_rate:
+          type: number
+          format: double
+          description: Добовий тариф оренди (грн).
+          example: 150.00
+        rental_days:
+          type: integer
+          description: Кількість днів оренди.
+          minimum: 1
+          example: 3
+        rental_total:
+          type: number
+          format: double
+          description: Загальна сума оренди (daily_rental_rate × rental_days).
+          example: 450.00
+        is_club_member:
+          type: boolean
+          description: |
+            Чи має клієнт статус ClubMember (REQ-F-005).
+            `true` — пільгова застава; `false` — повна застава 100%.
+          example: true
+        deposit_percent:
+          type: integer
+          description: |
+            Відсоток застави від ринкової вартості гри (REQ-F-004):
+            - `0` — ClubMember + Категорія A
+            - `30` — ClubMember + Категорія B або C
+            - `100` — Звичайний клієнт
+          enum: [0, 30, 100]
+          example: 30
+        deposit_amount:
+          type: number
+          format: double
+          description: Розрахована сума застави (market_price × deposit_percent / 100).
+          example: 660.00
+
+    RentalReturnRequest:
+      type: object
+      description: |
+        Запит на обробку повернення гри (REQ-F-006, REQ-F-007).
+        Адміністратор зазначає фактичну дату повернення та наявність дефектів.
+      required:
+        - actual_return_date
+        - defect_detected
+      properties:
+        actual_return_date:
+          type: string
+          format: date-time
+          description: Фактична дата та час повернення гри (ISO 8601).
+          example: "2026-10-31T12:00:00Z"
+        defect_detected:
+          type: boolean
+          description: |
+            Чи виявлено пошкодження/дефект при поверненні (REQ-F-007).
+            Якщо `true`, обов'язково вказати `defect_fee_percent`.
+          example: true
+        defect_fee_percent:
+          type: number
+          format: double
+          description: |
+            Ставка утримання за дефект як відсоток від ринкової вартості гри (REQ-F-007).
+            Обов'язкове поле при `defect_detected = true`.
+            Допустимі значення: 10, 20, 30, 50, 100.
+          enum: [10.0, 20.0, 30.0, 50.0, 100.0]
+          nullable: true
+          example: 20.0
+
+    RentalReturnResponse:
+      type: object
+      description: |
+        Результат обробки повернення гри (REQ-F-006, REQ-F-007).
+        Містить деталізацію утримань з застави та фінальну суму до повернення/доплати.
+      required:
+        - rental_id
+        - client_id
+        - game_title
+        - scheduled_return_date
+        - actual_return_date
+        - overdue_days
+        - daily_rental_rate
+        - overdue_penalty
+        - defect_detected
+        - defect_fee_percent
+        - defect_fee_amount
+        - deposit_held
+        - total_deductions
+        - refund_amount
+        - copy_status
+        - client_clean_rentals_reset
+        - client_club_member_revoked
+      properties:
+        rental_id:
+          type: string
+          description: Ідентифікатор договору оренди.
+          example: "rental-2024-0158"
+        client_id:
+          type: string
+          description: Ідентифікатор клієнта.
+          example: "client-007"
+        game_title:
+          type: string
+          description: Назва повернутої гри.
+          example: "Dune: Imperium"
+        scheduled_return_date:
+          type: string
+          format: date-time
+          description: Планова дата повернення за договором (ISO 8601).
+          example: "2026-10-30T12:00:00Z"
+        actual_return_date:
+          type: string
+          format: date-time
+          description: Фактична дата повернення (ISO 8601).
+          example: "2026-10-31T12:00:00Z"
+        overdue_days:
+          type: integer
+          description: |
+            Кількість повних або неповних діб прострочення (REQ-F-006).
+            0, якщо повернено вчасно.
+          minimum: 0
+          example: 1
+        daily_rental_rate:
+          type: number
+          format: double
+          description: Добовий тариф оренди (грн).
+          example: 100.00
+        overdue_penalty:
+          type: number
+          format: double
+          description: |
+            Сума пені за прострочення (REQ-F-006):
+            overdue_days × 2 × daily_rental_rate.
+          minimum: 0
+          example: 200.00
+        defect_detected:
+          type: boolean
+          description: Чи виявлено пошкодження.
+          example: true
+        defect_fee_percent:
+          type: number
+          format: double
+          description: Відсоток утримання за дефект від ринкової вартості.
+          example: 20.0
+        defect_fee_amount:
+          type: number
+          format: double
+          description: |
+            Сума штрафу за дефект (REQ-F-007):
+            market_price × defect_fee_percent / 100.
+          minimum: 0
+          example: 200.00
+        deposit_held:
+          type: number
+          format: double
+          description: Сума застави, утриманої при оформленні оренди.
+          example: 1000.00
+        total_deductions:
+          type: number
+          format: double
+          description: Загальна сума утримань (overdue_penalty + defect_fee_amount).
+          minimum: 0
+          example: 400.00
+        refund_amount:
+          type: number
+          format: double
+          description: |
+            Фінальна сума до повернення клієнту (deposit_held - total_deductions).
+            Від'ємне значення означає необхідність доплати.
+          example: 600.00
+        copy_status:
+          type: string
+          description: |
+            Новий стан примірника після повернення (REQ-F-003, REQ-F-007):
+            - `AVAILABLE` — без дефектів.
+            - `NEEDS_REPAIR` — виявлено пошкодження.
+          enum: [AVAILABLE, NEEDS_REPAIR]
+          example: "NEEDS_REPAIR"
+        client_clean_rentals_reset:
+          type: boolean
+          description: |
+            Чи було скинуто лічильник бездоганних оренд клієнта до 0 (REQ-F-007).
+            `true` — при виявленні дефекту.
+          example: true
+        client_club_member_revoked:
+          type: boolean
+          description: |
+            Чи було скасовано статус ClubMember клієнта (REQ-F-007).
+            `true` — при виявленні дефекту та наявності статусу.
+          example: true
+
+    # ------------------------------------------------------------------------
+    # TABLE BOOKINGS
+    # ------------------------------------------------------------------------
+    TableBookingRequest:
+      type: object
+      description: |
+        Запит на бронювання ігрового столу (REQ-F-008, REQ-NF-002).
+        Час початку повинен бути кратним 1 годині (хвилини = 00, секунди = 00).
+      required:
+        - table_id
+        - client_id
+        - start_time
+        - duration_hours
+      properties:
+        table_id:
+          type: string
+          description: Ідентифікатор ігрового столу.
+          example: "table-03"
+        client_id:
+          type: string
+          description: Ідентифікатор клієнта, який бронює стіл.
+          example: "client-015"
+        start_time:
+          type: string
+          format: date-time
+          description: |
+            Час початку бронювання (ISO 8601).
+            Повинен бути кратним 1 годині (REQ-F-008):
+            хвилини = 00, секунди = 00.
+          example: "2026-10-30T14:00:00Z"
+        duration_hours:
+          type: integer
+          description: |
+            Тривалість бронювання в годинах (REQ-F-008).
+            Ціле число ≥ 1, дискретність — 1 година.
+          minimum: 1
+          example: 2
+
+    TableBookingResponse:
+      type: object
+      description: |
+        Підтверджене бронювання ігрового столу (REQ-F-008).
+        Статус при створенні завжди `CONFIRMED`.
+      required:
+        - booking_id
+        - table_id
+        - client_id
+        - start_time
+        - end_time
+        - duration_hours
+        - status
+        - created_at
+      properties:
+        booking_id:
+          type: string
+          description: Унікальний ідентифікатор бронювання.
+          example: "booking-2024-0312"
+        table_id:
+          type: string
+          description: Ідентифікатор заброньованого столу.
+          example: "table-03"
+        client_id:
+          type: string
+          description: Ідентифікатор клієнта.
+          example: "client-015"
+        start_time:
+          type: string
+          format: date-time
+          description: Час початку бронювання (ISO 8601).
+          example: "2026-10-30T14:00:00Z"
+        end_time:
+          type: string
+          format: date-time
+          description: Розрахований час завершення бронювання (ISO 8601).
+          example: "2026-10-30T16:00:00Z"
+        duration_hours:
+          type: integer
+          description: Тривалість бронювання в годинах.
+          example: 2
+        status:
+          type: string
+          description: Статус бронювання. При створенні завжди `CONFIRMED`.
+          enum: [CONFIRMED]
+          example: "CONFIRMED"
+        created_at:
+          type: string
+          format: date-time
+          description: Дата та час створення бронювання (ISO 8601).
+          example: "2026-10-30T09:20:00Z"
+
+    NoShowResponse:
+      type: object
+      description: |
+        Результат перевірки неявки гостя на бронювання (REQ-F-009).
+        Якщо від початку слота минуло >20 хвилин — статус переходить у `CANCELLED_NO_SHOW`.
+      required:
+        - booking_id
+        - table_id
+        - client_id
+        - slot_start_time
+        - checked_at
+        - elapsed_minutes
+        - no_show_triggered
+        - status
+        - table_status
+        - message
+      properties:
+        booking_id:
+          type: string
+          description: Ідентифікатор бронювання.
+          example: "booking-2024-0312"
+        table_id:
+          type: string
+          description: Ідентифікатор столу.
+          example: "table-03"
+        client_id:
+          type: string
+          description: Ідентифікатор клієнта.
+          example: "client-015"
+        slot_start_time:
+          type: string
+          format: date-time
+          description: Час початку заброньованого слота (ISO 8601).
+          example: "2026-10-30T14:00:00Z"
+        checked_at:
+          type: string
+          format: date-time
+          description: Час проведення перевірки (ISO 8601).
+          example: "2026-10-30T14:21:00Z"
+        elapsed_minutes:
+          type: integer
+          description: Кількість хвилин, що минули від початку слота до перевірки.
+          minimum: 0
+          example: 21
+        no_show_triggered:
+          type: boolean
+          description: |
+            Чи було ініційовано автоскасування (REQ-F-009).
+            `true` — минуло >20 хв, бронь скасована.
+            `false` — ще не минуло 20 хв, бронь активна.
+          example: true
+        status:
+          type: string
+          description: |
+            Поточний статус бронювання після перевірки:
+            - `CANCELLED_NO_SHOW` — бронь скасована через неявку.
+            - `CONFIRMED` — бронь ще активна (час очікування не вичерпано).
+          enum: [CONFIRMED, CANCELLED_NO_SHOW]
+          example: "CANCELLED_NO_SHOW"
+        table_status:
+          type: string
+          description: |
+            Поточний стан столу після перевірки:
+            - `AVAILABLE` — стіл вивільнено після No-Show.
+            - `RESERVED` — стіл ще зарезервований.
+          enum: [AVAILABLE, RESERVED]
+          example: "AVAILABLE"
+        message:
+          type: string
+          description: Людиночитне повідомлення про результат перевірки.
+          example: "Бронювання скасовано через неявку клієнта (No-Show). Стіл вивільнено."
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Автентифікація через JWT-токен (Bearer Token).
+        Усі ендпоінти вимагають наявності валідного токена.
+        Токен передається в заголовку `Authorization: Bearer <token>`.
